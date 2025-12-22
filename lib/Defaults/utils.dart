@@ -1,5 +1,5 @@
 class UUtils {
-  static const String baseUrl = "https://safepro.tecclubb.com/api/";
+  static const String baseUrl = "https://api.safeprovpn.com/v1/";
   static const String login = "${baseUrl}login";
   static const String register = "${baseUrl}signup";
   static const String forgotPassword = "${baseUrl}forgot-password";
@@ -10,7 +10,4 @@ class UUtils {
   static const String logout = "${baseUrl}logout";
   static const String plans = "${baseUrl}plans";
   static const String feedback = "${baseUrl}feedback/store";
-
-
-  
 }

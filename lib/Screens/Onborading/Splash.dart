@@ -78,21 +78,25 @@ class _SplashScreenState extends State<SplashScreen>
     final String? token = prefs.getString('token');
     final bool isLoggedIn = token != null && token.isNotEmpty;
 
+    // Always sync VPN state on app startup to prevent stuck connecting state
+    final provider = context.read<VpnProvide>();
+    await provider.syncVpnStateOnRestart();
+
     // If user is logged in, preload servers and user data
     if (isLoggedIn && mounted) {
-      final provider = context.read<VpnProvide>();
-
       // Preload all necessary data in parallel
       await Future.wait([
         provider.getServersPlease(true),
         provider.getUser(),
         provider.getPremium(),
         provider.loadFavoriteServers(),
+        provider.pingAllServers(),
         provider.loadSelectedServerIndex(),
       ]);
 
       // Load protocol and kill switch settings
       await provider.lProtocolFromStorage();
+      await provider.pingAllServers();
       await provider.myKillSwitch();
 
       // Validate that free users don't have premium servers selected

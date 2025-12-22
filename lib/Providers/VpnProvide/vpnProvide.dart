@@ -97,17 +97,69 @@ class VpnProvide with ChangeNotifier {
     }
   }
 
+  // Sync VPN state on app restart to handle stuck states
+  Future<void> syncVpnStateOnRestart() async {
+    try {
+      final currentStage = await _wireguardEngine.stage();
+      log("Syncing VPN state on restart - Current stage: $currentStage");
+
+      // Update internal state to match actual VPN state
+      if (currentStage == VpnStage.connected) {
+        vpnConnectionStatus = VpnStatusConnectionStatus.connected;
+        speedMonitor();
+        if (connectionDuration == 0) {
+          startConnectionTimer();
+        }
+        log("VPN is connected - resuming monitoring");
+      } else if (currentStage == VpnStage.disconnected) {
+        vpnConnectionStatus = VpnStatusConnectionStatus.disconnected;
+        stopMonitor();
+        stopConnectionTimer();
+        log("VPN is disconnected");
+      } else if (currentStage == VpnStage.connecting ||
+          currentStage == VpnStage.disconnecting) {
+        // If stuck in connecting/disconnecting, force disconnect
+        log(
+          "VPN stuck in transitional state: $currentStage - forcing disconnect",
+        );
+        await _wireguardEngine.stopVpn().timeout(const Duration(seconds: 3));
+        vpnConnectionStatus = VpnStatusConnectionStatus.disconnected;
+        stopMonitor();
+        stopConnectionTimer();
+      }
+      notifyListeners();
+    } catch (e) {
+      log("Error syncing VPN state on restart: $e");
+      vpnConnectionStatus = VpnStatusConnectionStatus.disconnected;
+      notifyListeners();
+    }
+  }
+
   autoC(BuildContext context) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     autoConnectOn = prefs.getBool('autoConnect') ?? false;
-    log(autoConnectOn.toString());
-    if (autoConnectOn &&
-        vpnConnectionStatus == VpnStatusConnectionStatus.disconnected) {
-      await toggleVpn();
-      log(autoConnectOn.toString());
-      notifyListeners();
-    } else if (vpnConnectionStatus == VpnStatusConnectionStatus.connected) {
-      return;
+    log("Auto-connect check: $autoConnectOn");
+
+    // Check actual VPN stage to prevent auto-connect on app restart
+    try {
+      final currentStage = await _wireguardEngine.stage();
+      log("Current VPN stage for auto-connect: $currentStage");
+
+      // Only auto-connect if:
+      // 1. Auto-connect is enabled
+      // 2. VPN is truly disconnected (not connecting, not connected, not disconnecting)
+      // 3. This is a fresh app start (servers were just loaded)
+      if (autoConnectOn && currentStage == VpnStage.disconnected) {
+        log("Triggering auto-connect");
+        await toggleVpn();
+        notifyListeners();
+      } else {
+        log(
+          "Auto-connect skipped: autoConnect=$autoConnectOn, Stage=$currentStage",
+        );
+      }
+    } catch (e) {
+      log("Error checking VPN stage for auto-connect: $e");
     }
   }
 
@@ -141,7 +193,9 @@ class VpnProvide with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> selectFastestServerByHealth() async {
+  Future<void> selectFastestServerByHealth({
+    bool considerAllServers = false,
+  }) async {
     if (servers.isEmpty) {
       log("No servers available to analyze.");
       return;
@@ -152,19 +206,22 @@ class VpnProvide with ChangeNotifier {
 
     int fastestIndex = 0;
     double highestScore = -1.0;
-    bool foundFreeServer = false;
+    bool foundServer = false;
 
     for (int i = 0; i < servers.length; i++) {
       try {
-        // Skip premium servers - only consider free servers
-        if (servers[i].type.toLowerCase() != 'free') {
-          log(
-            "Skipping premium server: ${servers[i].name} (Type: ${servers[i].type})",
-          );
-          continue;
+        // For free users, only consider free servers
+        // For premium users or when considerAllServers is true, consider all servers
+        if (!isPremium && !considerAllServers) {
+          if (servers[i].type.toLowerCase() != 'free') {
+            log(
+              "Skipping premium server for free user: ${servers[i].name} (Type: ${servers[i].type})",
+            );
+            continue;
+          }
         }
 
-        foundFreeServer = true;
+        foundServer = true;
 
         // Each server can have multiple subServers, so find the best among them
         final subServers = servers[i].subServers ?? [];
@@ -173,11 +230,22 @@ class VpnProvide with ChangeNotifier {
           if (vpsGroup != null &&
               vpsGroup.servers != null &&
               vpsGroup.servers!.isNotEmpty) {
+            // BUSINESS RULE: ONLY primary VPS are eligible for selection
+            final primaryVps = vpsGroup.servers!.firstWhere(
+              (vps) => vps.role.toLowerCase() == 'primary',
+              orElse: () => vpsGroup.servers!.first,
+            );
+
+            // Skip if no primary VPS found and first server is not primary
+            if (primaryVps.role.toLowerCase() != 'primary') {
+              log("Skipping ${servers[i].name} - No primary VPS available");
+              continue;
+            }
+
             final score =
-                double.tryParse(vpsGroup.servers![0].healthScore.toString()) ??
-                0.0;
+                double.tryParse(primaryVps.healthScore.toString()) ?? 0.0;
             log(
-              "Server ${servers[i].name} - Health Score: $score, Type ${servers[i].type}",
+              "Server ${servers[i].name} - Primary VPS Health Score: $score, Type ${servers[i].type}",
             );
             if (score > highestScore) {
               highestScore = score;
@@ -190,8 +258,12 @@ class VpnProvide with ChangeNotifier {
       }
     }
 
-    if (!foundFreeServer) {
-      log("No free servers available. Cannot select fastest server.");
+    if (!foundServer) {
+      if (!isPremium && !considerAllServers) {
+        log("No free servers available for free user.");
+      } else {
+        log("No servers available.");
+      }
       isloading = false;
       notifyListeners();
       return;
@@ -204,9 +276,15 @@ class VpnProvide with ChangeNotifier {
     isloading = false;
     notifyListeners();
 
-    log(
-      "Fastest free server selected: ${servers[fastestIndex].name} (Health Score: $highestScore, Type: ${servers[fastestIndex].type})",
-    );
+    if (isPremium || considerAllServers) {
+      log(
+        "Fastest server selected: ${servers[fastestIndex].name} (Health Score: $highestScore, Type: ${servers[fastestIndex].type})",
+      );
+    } else {
+      log(
+        "Fastest free server selected: ${servers[fastestIndex].name} (Health Score: $highestScore, Type: ${servers[fastestIndex].type})",
+      );
+    }
   }
 
   // Select next fastest server (excluding current one)
@@ -222,7 +300,7 @@ class VpnProvide with ChangeNotifier {
     int currentIndex = selectedServerIndex;
     int fastestIndex = 0;
     double highestScore = -1.0;
-    bool foundFreeServer = false;
+    bool foundServer = false;
 
     for (int i = 0; i < servers.length; i++) {
       try {
@@ -232,15 +310,18 @@ class VpnProvide with ChangeNotifier {
           continue;
         }
 
-        // Skip premium servers - only consider free servers
-        if (servers[i].type.toLowerCase() != 'free') {
-          log(
-            "Skipping premium server: ${servers[i].name} (Type: ${servers[i].type})",
-          );
-          continue;
+        // For free users, only consider free servers
+        // For premium users, consider all servers
+        if (!isPremium) {
+          if (servers[i].type.toLowerCase() != 'free') {
+            log(
+              "Skipping premium server for free user: ${servers[i].name} (Type: ${servers[i].type})",
+            );
+            continue;
+          }
         }
 
-        foundFreeServer = true;
+        foundServer = true;
 
         // Each server can have multiple subServers, so find the best among them
         final subServers = servers[i].subServers ?? [];
@@ -249,11 +330,22 @@ class VpnProvide with ChangeNotifier {
           if (vpsGroup != null &&
               vpsGroup.servers != null &&
               vpsGroup.servers!.isNotEmpty) {
+            // BUSINESS RULE: ONLY primary VPS are eligible for selection
+            final primaryVps = vpsGroup.servers!.firstWhere(
+              (vps) => vps.role.toLowerCase() == 'primary',
+              orElse: () => vpsGroup.servers!.first,
+            );
+
+            // Skip if no primary VPS found and first server is not primary
+            if (primaryVps.role.toLowerCase() != 'primary') {
+              log("Skipping ${servers[i].name} - No primary VPS available");
+              continue;
+            }
+
             final score =
-                double.tryParse(vpsGroup.servers![0].healthScore.toString()) ??
-                0.0;
+                double.tryParse(primaryVps.healthScore.toString()) ?? 0.0;
             log(
-              "Server ${servers[i].name} - Health Score: $score, Type ${servers[i].type}",
+              "Server ${servers[i].name} - Primary VPS Health Score: $score, Type ${servers[i].type}",
             );
             if (score > highestScore) {
               highestScore = score;
@@ -266,8 +358,12 @@ class VpnProvide with ChangeNotifier {
       }
     }
 
-    if (!foundFreeServer) {
-      log("No other free servers available. Keeping current server.");
+    if (!foundServer) {
+      if (!isPremium) {
+        log("No other free servers available. Keeping current server.");
+      } else {
+        log("No other servers available. Keeping current server.");
+      }
       isloading = false;
       notifyListeners();
       return;
@@ -280,9 +376,15 @@ class VpnProvide with ChangeNotifier {
     isloading = false;
     notifyListeners();
 
-    log(
-      "Next fastest free server selected: ${servers[fastestIndex].name} (Health Score: $highestScore, Type: ${servers[fastestIndex].type})",
-    );
+    if (isPremium) {
+      log(
+        "Next fastest server selected: ${servers[fastestIndex].name} (Health Score: $highestScore, Type: ${servers[fastestIndex].type})",
+      );
+    } else {
+      log(
+        "Next fastest free server selected: ${servers[fastestIndex].name} (Health Score: $highestScore, Type: ${servers[fastestIndex].type})",
+      );
+    }
   }
 
   Future<bool> setProtocol(Protocol protocol) async {
@@ -419,7 +521,7 @@ class VpnProvide with ChangeNotifier {
     }
 
     // Find first free server or select fastest free server
-    await selectFastestServerByHealth();
+    await selectFastestServerByHealth(considerAllServers: false);
   }
 
   // Set query text and filter list

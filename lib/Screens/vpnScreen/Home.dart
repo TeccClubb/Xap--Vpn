@@ -1,3 +1,4 @@
+import 'dart:developer' show log;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -60,8 +61,12 @@ class _HomeScreenState extends State<HomeScreen>
           provider.pingAllServers(); // Don't await - let it run in background
         }
 
-        // Check and trigger auto-connect if enabled
+        // Check and trigger auto-connect ONLY when loading fresh (not on app restart)
         await provider.autoC(context);
+      } else {
+        // On app restart, just sync the VPN state without triggering auto-connect
+        log("App restart detected - checking VPN state");
+        await provider.syncVpnStateOnRestart();
       }
 
       // Start timer if already connected (e.g., after app restart)
