@@ -98,9 +98,9 @@ class _SplashScreenState extends State<SplashScreen>
       await provider.lProtocolFromStorage();
       await provider.pingAllServers();
       await provider.myKillSwitch();
-
       // Validate that free users don't have premium servers selected
       await provider.validateAndFixSelectedServer();
+ await provider.autoC(context);
 
       // Auto-select fastest server if no valid server is selected
       if (provider.servers.isNotEmpty &&
@@ -115,7 +115,9 @@ class _SplashScreenState extends State<SplashScreen>
       }
 
       // Check and trigger auto-connect if enabled
-      await provider.autoC(context);
+
+
+     
     }
 
     await Future.delayed(const Duration(milliseconds: 300));

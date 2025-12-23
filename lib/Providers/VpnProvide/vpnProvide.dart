@@ -130,21 +130,21 @@ class VpnProvide with ChangeNotifier {
 
     // Check actual VPN stage to prevent auto-connect on app restart
     try {
-      final currentStage = await _wireguardEngine.getVpnStatus();
-      log("Current VPN stage for auto-connect: $currentStage");
+      // final currentStage = await _wireguardEngine.getVpnStatus();
+      // log("Current VPN stage for auto-connect: $currentStage");
 
       // Only auto-connect if:
       // 1. Auto-connect is enabled
       // 2. VPN is truly disconnected (not connecting, not connected, not disconnecting)
-      // 3. This is a fresh app start (servers were just loaded)
-      if (autoConnectOn && currentStage == VpnStage.disconnected) {
+      // 3. This is a fresh app start (servers were just loaded
+      if (autoConnectOn && vpnConnectionStatus == VpnStatusConnectionStatus.disconnected) {
         log("Triggering auto-connect");
         await toggleVpn();
         notifyListeners();
       } else {
-        log(
-          "Auto-connect skipped: autoConnect=$autoConnectOn, Stage=$currentStage",
-        );
+        // log(
+        //   "Auto-connect skipped: autoConnect=$autoConnectOn, Stage=$currentStage",
+        // );
       }
     } catch (e) {
       log("Error checking VPN stage for auto-connect: $e");
