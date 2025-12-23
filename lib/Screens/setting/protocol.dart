@@ -88,9 +88,8 @@ class _ProtocolScreenState extends State<ProtocolScreen> {
                       children: [
                         _buildProtocolCard(
                           provider: provider,
-                          protocol: Protocol.wireguard,
                           name: 'WireGuard',
-                          description: 'Modern and lightweight',
+                          description: 'Modern and lightweight VPN protocol',
                           speed: 'Excellent',
                           speedValue: 0.95,
                           security: 'High Security',
@@ -102,20 +101,30 @@ class _ProtocolScreenState extends State<ProtocolScreen> {
                           context: context,
                         ),
                         SizedBox(height: 16),
-                        _buildProtocolCard(
-                          provider: provider,
-                          protocol: Protocol.singbox,
-                          name: 'SingBox',
-                          description: 'Next-generation VPN protocol',
-                          speed: 'Excellent',
-                          speedValue: 0.95,
-                          security: 'High Security',
-                          protocolType: 'Advanced',
-                          encryption: 'Multi-layer',
-                          recommended: false,
-                          color: Color(0xFF5E5CE6),
-                          icon: Icons.bolt,
-                          context: context,
+                        Container(
+                          padding: EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: _getCardColor(context),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                color: Color(0xFF5E5CE6),
+                              ),
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  'WireGuard is a modern, fast, and secure VPN protocol that offers excellent performance and strong encryption.',
+                                  style: GoogleFonts.spaceGrotesk(
+                                    fontSize: 13,
+                                    color: _getSubtitleColor(context),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -170,7 +179,6 @@ class _ProtocolScreenState extends State<ProtocolScreen> {
 
   Widget _buildProtocolCard({
     required VpnProvide provider,
-    required Protocol protocol,
     required String name,
     required String description,
     required String speed,
@@ -183,47 +191,26 @@ class _ProtocolScreenState extends State<ProtocolScreen> {
     required IconData icon,
     required BuildContext context,
   }) {
-    final isSelected = provider.selectedProtocol == protocol;
+    final isSelected = true; // Always selected since it's the only protocol
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: () async {
-        // Try to set the protocol
-        final success = await provider.setProtocol(protocol);
-
-        if (!success && mounted) {
-          // Show error message if protocol change failed
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Please disconnect VPN before changing protocol',
-                style: GoogleFonts.spaceGrotesk(color: Colors.white),
-              ),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              duration: const Duration(seconds: 2),
+      onTap: () {
+        // No action needed - WireGuard is the only protocol
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'WireGuard is the only supported protocol',
+              style: GoogleFonts.spaceGrotesk(color: Colors.white),
             ),
-          );
-        } else if (success && mounted) {
-          // Show success message
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Protocol changed to $name',
-                style: GoogleFonts.spaceGrotesk(color: Colors.white),
-              ),
-              backgroundColor: Colors.green,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              duration: const Duration(seconds: 2),
+            backgroundColor: Color(0xFF00D68F),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
             ),
-          );
-        }
+            duration: const Duration(seconds: 2),
+          ),
+        );
       },
       child: AnimatedContainer(
         duration: Duration(milliseconds: 300),

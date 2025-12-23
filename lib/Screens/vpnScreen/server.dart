@@ -264,41 +264,19 @@ class _ServerScreenState extends State<ServerScreen> {
                   provider.vpnConnectionStatus ==
                   VpnStatusConnectionStatus.connected;
 
-              // Select fastest server based on user type
-              if (provider.isPremium) {
-                // Premium users can use all servers
-                await provider.selectFastestServerByHealth(
-                  considerAllServers: true,
-                );
-              } else {
-                // Free users can only use free servers
-                // Check if there are any free servers available
-                final hasFreeServers = provider.servers.any(
-                  (server) => server.type.toLowerCase() == 'free',
-                );
-
-                if (!hasFreeServers) {
-                  // No free servers available, show premium dialog
-                  _showPremiumRequiredDialog('Fastest Free Server');
-                  return;
-                }
-
-                await provider.selectFastestServerByHealth(
-                  considerAllServers: false,
-                );
-              }
+              await provider.selectFastestServerByHealth();
 
               if (provider.servers.isNotEmpty) {
                 final fastestServer =
                     provider.servers[provider.selectedServerIndex];
-
-                // Double-check the selected server is appropriate for user type
-                if (!provider.isPremium &&
+                
+                // Double-check the selected server is free for non-premium users
+                if (!provider.isPremium && 
                     fastestServer.type.toLowerCase() != 'free') {
                   _showPremiumRequiredDialog('Fastest Free Server');
                   return;
                 }
-
+                
                 setState(() {
                   _selectedServerId = fastestServer.id;
                 });
@@ -574,14 +552,6 @@ class _ServerScreenState extends State<ServerScreen> {
 
         return GestureDetector(
           onTap: () async {
-            // BUSINESS RULE: Free users CANNOT manually select servers
-            if (!userIsPremium) {
-              // Show message that free users must use Fastest Server tab
-              _showFreeUserRestrictionMessage();
-              return;
-            }
-
-            // Premium users can manually select any server
             if (isPremium && !userIsPremium) {
               _showPremiumRequiredMessage(server.name);
               return;
@@ -1007,119 +977,6 @@ class _ServerScreenState extends State<ServerScreen> {
                           style: GoogleFonts.outfit(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showFreeUserRestrictionMessage() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: _getCardColor(context),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: Color(0xFF0B5C8C).withOpacity(0.3),
-                width: 1.5,
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: Color(0xFF0B5C8C).withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.bolt,
-                    size: 40,
-                    color: Color(0xFF0B5C8C),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Use Fastest Server',
-                  style: GoogleFonts.outfit(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: _getTextColor(context),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Free users can only connect using the "Fastest Server" feature. Tap the Fastest Server button to connect automatically.',
-                  style: GoogleFonts.outfit(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w400,
-                    color: _getSubtitleColor(context),
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(
-                              color: Colors.grey.withOpacity(0.3),
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                        child: Text(
-                          'Got it',
-                          style: GoogleFonts.outfit(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          Get.to(() => PremiumScreen());
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF0B5C8C),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          'Upgrade to Premium',
-                          style: GoogleFonts.outfit(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),

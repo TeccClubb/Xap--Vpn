@@ -11,3 +11,5 @@ class UUtils {
   static const String plans = "${baseUrl}plans";
   static const String feedback = "${baseUrl}feedback/store";
 }
+
+const String VPS_API_KEY = "a3f7b9c2-d1e5-4f68-8a0b-95c6e7f4d8a1";

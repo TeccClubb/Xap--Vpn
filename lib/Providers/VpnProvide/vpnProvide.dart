@@ -9,25 +9,16 @@ import 'package:dart_ping/dart_ping.dart';
 
 import 'package:wireguard_flutter/wireguard_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-// import 'package:latestyallavpn/ReusableWidgets/customSnackBar.dart';
-// import 'package:latestyallavpn/DataModel/serverDataModel.dart' show Server;
-// import 'package:latestyallavpn/NetworkServices/networkOpenVpn.dart'
-// show OVPNEngine;
-// import 'package:latestyallavpn/NetworkServices/networkSingbox.dart' show NetworkSingbox;
-// import 'package:latestyallavpn/NetworkServices/networkWireguard.dart'
-// show Wireguardservices;
-import 'package:wireguard_flutter/wireguard_flutter_platform_interface.dart'
-    show WireGuardFlutterInterface;
 import 'package:xap_vpn/DataModel/plansModel.dart';
 import 'package:xap_vpn/DataModel/userModel.dart';
 import 'package:xap_vpn/DataModel/serverDataModel.dart';
 import 'package:xap_vpn/DataModel/subscriptionModel.dart';
 import 'package:xap_vpn/Defaults/utils.dart';
-import 'package:xap_vpn/NetworkServices/networkWireguard.dart';
+import 'package:xap_vpn/Wireguard/Engine/wireguard_engine.dart';
 import 'package:xap_vpn/ReusableWidgets/customSnackBar.dart';
 import 'package:xap_vpn/Screens/Auth/login.dart';
 
-enum Protocol { wireguard, singbox }
+// Only WireGuard protocol is supported
 
 enum VpnStatusConnectionStatus {
   connected,
@@ -40,10 +31,7 @@ enum VpnStatusConnectionStatus {
 class VpnProvide with ChangeNotifier {
   var vpnConnectionStatus = VpnStatusConnectionStatus.disconnected;
 
-  final WireGuardFlutterInterface _wireguardEngine = WireGuardFlutter.instance;
-  Protocol selectedProtocol = Protocol.wireguard;
-  final Wireguardservices _wireguardService = Wireguardservices();
-  // final NetworkSingbox _singboxService = NetworkSingbox();
+  final WireguardEngine _wireguardEngine = WireguardEngine();
   var isloading = false;
   var selectedServerIndex = 0;
   var selectedSubServerIndex = 0;
@@ -100,7 +88,7 @@ class VpnProvide with ChangeNotifier {
   // Sync VPN state on app restart to handle stuck states
   Future<void> syncVpnStateOnRestart() async {
     try {
-      final currentStage = await _wireguardEngine.stage();
+      final currentStage = await _wireguardEngine.getVpnStatus();
       log("Syncing VPN state on restart - Current stage: $currentStage");
 
       // Update internal state to match actual VPN state
@@ -142,7 +130,7 @@ class VpnProvide with ChangeNotifier {
 
     // Check actual VPN stage to prevent auto-connect on app restart
     try {
-      final currentStage = await _wireguardEngine.stage();
+      final currentStage = await _wireguardEngine.getVpnStatus();
       log("Current VPN stage for auto-connect: $currentStage");
 
       // Only auto-connect if:
@@ -387,26 +375,6 @@ class VpnProvide with ChangeNotifier {
     }
   }
 
-  Future<bool> setProtocol(Protocol protocol) async {
-    if (selectedProtocol == protocol) {
-      return true;
-    }
-
-    if (vpnConnectionStatus != VpnStatusConnectionStatus.disconnected) {
-      log('Protocol change blocked: VPN must be disconnected.');
-      notifyListeners();
-      return false;
-    }
-
-    selectedProtocol = protocol;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('selectedProtocol', protocol.name);
-
-    notifyListeners();
-    startGettingStages();
-    return true;
-  }
-
   Future<bool> setAutoSelectProtocol(bool value) async {
     if (value &&
         vpnConnectionStatus != VpnStatusConnectionStatus.disconnected) {
@@ -423,49 +391,12 @@ class VpnProvide with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('autoSelectProtocol', value);
 
-    if (value) {
-      final applied = await setProtocol(Protocol.wireguard);
-      if (!applied) {
-        autoSelectProtocol = false;
-        await prefs.setBool('autoSelectProtocol', false);
-        notifyListeners();
-        return false;
-      }
-    }
-
     notifyListeners();
     return true;
   }
 
   Future<void> lProtocolFromStorage() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String? proto = prefs.getString('selectedProtocol');
-    bool autoSelect = prefs.getBool('autoSelectProtocol') ?? false;
-    log("Auto select protocol: $autoSelect");
-    log("Saved protocol from storage: $proto");
-
-    if (proto != null) {
-      switch (proto.replaceFirst('Protocol.', '')) {
-        case 'wireguard':
-          selectedProtocol = Protocol.wireguard;
-          break;
-        case 'singbox':
-          selectedProtocol = Protocol.singbox;
-          break;
-        default:
-          selectedProtocol = Protocol.wireguard;
-          break;
-      }
-    } else {
-      selectedProtocol = Protocol.wireguard;
-    }
-
-    autoSelectProtocol = autoSelect;
-    if (autoSelectProtocol) {
-      selectedProtocol = Protocol.wireguard;
-    }
-
-    log("Restored protocol: ${selectedProtocol}");
+    log("Using WireGuard protocol (only supported protocol)");
     notifyListeners();
     startGettingStages();
   }
@@ -722,21 +653,17 @@ class VpnProvide with ChangeNotifier {
   }
 
   startGettingStages() {
-    log("Starting stage monitoring for ${selectedProtocol}");
+    log("Starting stage monitoring for WireGuard");
     // Avoid spawning multiple timers
     _stageTimer ??= Timer.periodic(const Duration(seconds: 1), (Timer t) async {
-      if (selectedProtocol == Protocol.wireguard) {
-        await listenWireguard();
-      } else if (selectedProtocol == Protocol.singbox) {
-        // SingBox implementation if needed
-      }
+      await listenWireguard();
     });
   }
 
   Future<VpnStatusConnectionStatus> listenWireguard() async {
     try {
       VpnStatusConnectionStatus newStage = vpnConnectionStatus;
-      final value = await _wireguardEngine.stage();
+      final value = await _wireguardEngine.getVpnStatus();
       if (value == VpnStage.connected) {
         newStage = VpnStatusConnectionStatus.connected;
       } else if (value == VpnStage.connecting || isloading) {
@@ -820,25 +747,14 @@ class VpnProvide with ChangeNotifier {
             headers: headers,
             body: jsonEncode({"name": "${name}_$platform"}),
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 8));
 
       if (_cancelRequested) {
         log("Registration aborted after initial request on $serverUrl");
         return false;
       }
 
-      final thirdResponse = await http
-          .post(
-            Uri.parse("$serverUrl/api/openvpn/clients/${name}_$platform"),
-            headers: headers,
-            body: jsonEncode({"password": password}),
-          )
-          .timeout(const Duration(seconds: 20));
-
-      if (_cancelRequested) {
-        log("Registration aborted after OpenVPN request on $serverUrl");
-        return false;
-      }
+      // OpenVPN registration removed - only WireGuard is supported
 
       log(
         "Initial registration response ${firstResponse.statusCode}: ${firstResponse.body}",
@@ -848,11 +764,8 @@ class VpnProvide with ChangeNotifier {
         firstResponse,
         "WireGuard registration",
       );
-      final Map<String, dynamic>? thirdBody = _parseJsonBody(
-        thirdResponse,
-        "OpenVPN registration",
-      );
 
+      // Check if registration succeeded
       final bool initialSuccess =
           firstResponse.statusCode == 200 &&
           firstBody != null &&
@@ -860,12 +773,31 @@ class VpnProvide with ChangeNotifier {
           (firstBody["success"] == true || firstBody.containsKey("config"));
 
       if (initialSuccess) {
-        log("Registered successfully on $serverUrl (initial attempt)");
+        log("Registered successfully on $serverUrl");
         return true;
       }
 
-      if (firstBody == null || firstBody["error"] == null) {
-        log("Registration failed on $serverUrl: unexpected response");
+      // Only retry if client already exists
+      final bool clientExists =
+          firstBody != null &&
+          firstBody["error"] != null &&
+          firstBody["error"].toString().toLowerCase().contains(
+            "already exists",
+          );
+
+      if (!clientExists) {
+        log(
+          "Registration failed on $serverUrl: ${firstBody?["error"] ?? "Unknown error"}",
+        );
+        return false;
+      }
+
+      // Client exists, delete and retry
+      log("Client already exists, attempting to delete and re-register");
+
+      if (_cancelRequested) {
+        log("Registration aborted before delete on $serverUrl");
+        return false;
       }
 
       final deleteResponse = await http
@@ -873,12 +805,12 @@ class VpnProvide with ChangeNotifier {
             Uri.parse("$serverUrl/api/clients/${name}_$platform"),
             headers: headers,
           )
-          .timeout(const Duration(seconds: 20));
-      log("Status wireguard ${deleteResponse.statusCode}");
-      log("Status body ${deleteResponse.body}");
+          .timeout(const Duration(seconds: 8));
 
       if (deleteResponse.statusCode != 200) {
-        log("Unable to delete existing client on $serverUrl");
+        log(
+          "Unable to delete existing client on $serverUrl: ${deleteResponse.statusCode}",
+        );
         return false;
       }
 
@@ -887,6 +819,7 @@ class VpnProvide with ChangeNotifier {
         return false;
       }
 
+      // Retry registration
       final newResponse = await http
           .post(
             Uri.parse("$serverUrl/api/clients/generate"),
@@ -896,8 +829,7 @@ class VpnProvide with ChangeNotifier {
               "password": password,
             }),
           )
-          .timeout(const Duration(seconds: 20));
-      log("Response is that ${newResponse.body}");
+          .timeout(const Duration(seconds: 8));
 
       final Map<String, dynamic>? responseBody = _parseJsonBody(
         newResponse,
@@ -911,65 +843,11 @@ class VpnProvide with ChangeNotifier {
               responseBody.containsKey("config"));
 
       if (registrationSuccess) {
-        log("Registered successfully on $serverUrl");
+        log("Registered successfully on $serverUrl (after retry)");
         return true;
       }
 
-      if (thirdBody != null) {
-        log("Third body is that ${thirdBody["error"]}");
-      }
-      if (_cancelRequested) {
-        log("Registration aborted before OpenVPN cleanup on $serverUrl");
-        return false;
-      }
-
-      if (thirdBody != null &&
-          (thirdBody["error"] != null || thirdBody["error"] == "")) {
-        log("OpenVPN error: ${thirdBody["error"]}");
-        log(
-          "Deleting existing OpenVPN client for ${name}_$platform on $serverUrl",
-        );
-        final deleteResponse = await http
-            .delete(
-              Uri.parse("$serverUrl/api/openvpn/clients/${name}_$platform"),
-              headers: headers,
-            )
-            .timeout(const Duration(seconds: 10));
-
-        if (deleteResponse.statusCode == 200) {
-          if (_cancelRequested) {
-            log(
-              "Registration aborted before OpenVPN re-register on $serverUrl",
-            );
-            return false;
-          }
-
-          final newResponse = await http
-              .post(
-                Uri.parse("$serverUrl/api/openvpn/clients/${name}_$platform"),
-                headers: headers,
-                body: jsonEncode({"password": password}),
-              )
-              .timeout(const Duration(seconds: 10));
-
-          log("Response is that ${newResponse.body}");
-
-          final Map<String, dynamic>? newOpenVpnResponse = _parseJsonBody(
-            newResponse,
-            "OpenVPN re-registration",
-          );
-          if (newOpenVpnResponse != null &&
-              newOpenVpnResponse["success"] == true) {
-            log("Registered successfully on $serverUrl");
-            return true;
-          } else {
-            log("❌ Registration failed on $serverUrl");
-            return false;
-          }
-        }
-      }
-
-      log("Registration failed on $serverUrl");
+      log("Registration failed on $serverUrl after retry");
       return false;
     } on TimeoutException catch (e) {
       log("Registration timed out on $serverUrl: $e");
@@ -984,31 +862,59 @@ class VpnProvide with ChangeNotifier {
     var domain = getRequiredServerDomain();
     log("Domain: $domain");
 
-    log("Protocol: ${selectedProtocol}");
+    log("Protocol: WireGuard (only supported)");
     log("State: ${vpnConnectionStatus}");
-    if (selectedProtocol == Protocol.wireguard) {
-      if (vpnConnectionStatus == VpnStatusConnectionStatus.connected ||
-          vpnConnectionStatus == VpnStatusConnectionStatus.connecting) {
-        if (vpnConnectionStatus == VpnStatusConnectionStatus.connecting) {
-          requestCancellation();
+
+    // CRITICAL: Backend validation - Enforce access control before connecting
+    if (vpnConnectionStatus == VpnStatusConnectionStatus.disconnected) {
+      // Validate server access for Free users
+      if (!isPremium) {
+        // Get selected server
+        final selectedServer =
+            servers.isNotEmpty && selectedServerIndex < servers.length
+            ? servers[selectedServerIndex]
+            : null;
+
+        // Check if selected server is Premium
+        if (selectedServer != null &&
+            selectedServer.type.toLowerCase() != 'free') {
+          log(
+            'SECURITY BLOCK: Free user attempted to connect to Premium server: ${selectedServer.name}',
+          );
+          connectionError =
+              'Premium server access denied. Please upgrade to Premium.';
+          notifyListeners();
+          return; // BLOCK CONNECTION AT BACKEND
         }
-        await disconnectWireguard();
-      } else if (vpnConnectionStatus ==
-          VpnStatusConnectionStatus.disconnected) {
-        log("Wireguard Called!");
-        await connectWireguard(domain);
+
+        // Check if any Free servers are available
+        final hasFreeServers = servers.any(
+          (server) => server.type.toLowerCase() == 'free',
+        );
+        if (!hasFreeServers) {
+          log('SECURITY BLOCK: No Free servers available for Free user');
+          connectionError =
+              'No Free servers available. Please upgrade to Premium for full access.';
+          notifyListeners();
+          return; // BLOCK CONNECTION AT BACKEND
+        }
       }
-    } else if (selectedProtocol == Protocol.singbox) {
-      // Implement Singbox connection logic here
-      log("Singbox protocol selected - functionality not implemented yet.");
-      connectSingbox();
+    }
+
+    // Only WireGuard is supported
+    if (vpnConnectionStatus == VpnStatusConnectionStatus.connected ||
+        vpnConnectionStatus == VpnStatusConnectionStatus.connecting) {
+      if (vpnConnectionStatus == VpnStatusConnectionStatus.connecting) {
+        requestCancellation();
+      }
+      await disconnectWireguard();
+    } else if (vpnConnectionStatus == VpnStatusConnectionStatus.disconnected) {
+      log("WireGuard Called!");
+      await connectWireguard(domain);
     }
   }
 
-  connectSingbox() async {
-    // Implement Singbox connection logic here
-    log("Singbox connection - functionality not implemented yet.");
-  }
+  // Singbox removed - only WireGuard is supported
 
   disconnectWireguard() async {
     try {
@@ -1059,7 +965,7 @@ class VpnProvide with ChangeNotifier {
             Uri.parse("$serverUrl/api/clients/${name}_$platform"),
             headers: headers,
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 8));
 
       if (_cancelRequested) {
         log("Config fetch aborted after response on $serverUrl");
@@ -1139,12 +1045,15 @@ class VpnProvide with ChangeNotifier {
 
       isloading = true;
       vpnConnectionStatus = VpnStatusConnectionStatus.connecting;
+      // connectionError = "Connecting to server...";
       notifyListeners();
 
       if (_shouldAbortConnection()) {
         return false;
       }
 
+      // connectionError = ".";
+      notifyListeners();
       final registered = await registerUserInVps("http://$domain:5000");
       if (_shouldAbortConnection()) {
         return false;
@@ -1158,6 +1067,8 @@ class VpnProvide with ChangeNotifier {
         return false;
       }
 
+      // connectionError = "Fetching VPN configuration...";
+      notifyListeners();
       final config = await selectedWirVPNConfig("http://$domain:5000");
       if (_shouldAbortConnection()) {
         return false;
@@ -1169,11 +1080,10 @@ class VpnProvide with ChangeNotifier {
         return false;
       }
 
-      final success = await _wireguardService.startWireguard(
-        server: domain,
-        serverName: 'United States',
-        wireguardConfig: config,
-      );
+      // Start WireGuard VPN using the new engine
+      // connectionError = "Starting VPN tunnel...";
+      notifyListeners();
+      await _wireguardEngine.startVpn(config, domain);
 
       if (_shouldAbortConnection()) {
         await _wireguardEngine.stopVpn();
@@ -1182,16 +1092,11 @@ class VpnProvide with ChangeNotifier {
 
       speedMonitor();
 
-      vpnConnectionStatus = success
-          ? VpnStatusConnectionStatus.connected
-          : VpnStatusConnectionStatus.disconnected;
+      vpnConnectionStatus = VpnStatusConnectionStatus.connected;
+      connectionError = null; // Clear error on success
       notifyListeners();
-      log(
-        success
-            ? 'WireGuard connected successfully'
-            : 'WireGuard connection failed',
-      );
-      return success;
+      log('WireGuard connected successfully');
+      return true;
     } catch (e) {
       log('Error connecting WireGuard: $e');
       vpnConnectionStatus = VpnStatusConnectionStatus.disconnected;
@@ -1204,16 +1109,7 @@ class VpnProvide with ChangeNotifier {
     }
   }
 
-  disconnectSingbox() async {
-    try {
-      //  await _singboxService.disconnect();
-      vpnConnectionStatus = VpnStatusConnectionStatus.disconnected;
-      notifyListeners();
-      log('Singbox disconnected successfully');
-    } catch (e) {
-      log('Error disconnecting Singbox: $e');
-    }
-  }
+  // Singbox removed - only WireGuard is supported
 
   Future<void> logout(BuildContext context) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();

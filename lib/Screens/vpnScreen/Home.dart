@@ -121,12 +121,168 @@ class _HomeScreenState extends State<HomeScreen>
         : Color(0xFFF5F5F5);
   }
 
+  bool _canUserAccessServer(VpnProvide provider, Server? server) {
+    if (server == null) return false;
+
+    if (provider.isPremium) {
+      return true;
+    }
+
+    return server.type.toLowerCase() == 'free';
+  }
+
+  bool _hasAccessibleServers(VpnProvide provider) {
+    if (provider.servers.isEmpty) return false;
+
+    if (provider.isPremium) {
+      return true;
+    }
+
+    return provider.servers.any(
+      (server) => server.type.toLowerCase() == 'free',
+    );
+  }
+
+  void _showPremiumUpgradeDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: _getCardColor(context),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.lock, color: Color(0xFF28E3ED), size: 28),
+              SizedBox(width: 12),
+              Text(
+                'Premium Required',
+                style: GoogleFonts.outfit(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: _getTextColor(context),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This server is only available for Premium users.',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 14,
+                  color: _getSubtitleColor(context),
+                ),
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Upgrade to Premium to:',
+                style: GoogleFonts.outfit(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: _getTextColor(context),
+                ),
+              ),
+              SizedBox(height: 8),
+              _buildBenefitRow('Access all Premium servers'),
+              _buildBenefitRow('Faster connection speeds'),
+              _buildBenefitRow('No ads'),
+              _buildBenefitRow('Priority support'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.outfit(
+                  fontSize: 14,
+                  color: _getSubtitleColor(context),
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                Get.to(PremiumScreen());
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Color(0xFF28E3ED),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: Text(
+                'Upgrade Now',
+                style: GoogleFonts.outfit(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildBenefitRow(String text) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Icon(Icons.check_circle, color: Color(0xFF28E3ED), size: 18),
+          SizedBox(width: 8),
+          Text(
+            text,
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 13,
+              color: _getSubtitleColor(context),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _toggleConnection() async {
     final provider = context.read<VpnProvide>();
 
     // Prevent action if already in a transitional state
     if (provider.isloading) {
       return;
+    }
+
+    // CRITICAL: Validate server access before connecting
+    if (provider.vpnConnectionStatus ==
+        VpnStatusConnectionStatus.disconnected) {
+      // Get selected server
+      final selectedServer =
+          provider.servers.isNotEmpty &&
+              provider.selectedServerIndex < provider.servers.length
+          ? provider.servers[provider.selectedServerIndex]
+          : null;
+
+      // Check if user has access to the selected server
+      if (!_canUserAccessServer(provider, selectedServer)) {
+        log('Access denied: Free user attempting to connect to Premium server');
+        _showPremiumUpgradeDialog(context);
+        return; // BLOCK CONNECTION
+      }
+
+      // Check if any accessible servers are available
+      if (!_hasAccessibleServers(provider)) {
+        log('Access denied: No Free servers available for Free user');
+        _showPremiumUpgradeDialog(context);
+        return; // BLOCK CONNECTION
+      }
     }
 
     // Toggle VPN connection
@@ -172,6 +328,33 @@ class _HomeScreenState extends State<HomeScreen>
       }
     } else {
       if (_dragPosition > threshold) {
+        // CRITICAL: Validate access before allowing swipe to connect
+        final selectedServer =
+            provider.servers.isNotEmpty &&
+                provider.selectedServerIndex < provider.servers.length
+            ? provider.servers[provider.selectedServerIndex]
+            : null;
+
+        if (!_canUserAccessServer(provider, selectedServer)) {
+          log(
+            'Swipe blocked: Free user attempting to connect to Premium server',
+          );
+          _showPremiumUpgradeDialog(context);
+          setState(() {
+            _dragPosition = 0;
+          });
+          return; // BLOCK SWIPE CONNECTION
+        }
+
+        if (!_hasAccessibleServers(provider)) {
+          log('Swipe blocked: No Free servers available for Free user');
+          _showPremiumUpgradeDialog(context);
+          setState(() {
+            _dragPosition = 0;
+          });
+          return; // BLOCK SWIPE CONNECTION
+        }
+
         _toggleConnection();
         _dragPosition = 0;
       } else {
@@ -682,26 +865,43 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               SizedBox(width: 6),
-              // Show first 5 server flags
-              ...provider.servers.take(5).map((server) {
-                return Container(
-                  margin: EdgeInsets.only(right: 4),
-                  width: 18,
-                  height: 18,
-                  child: ClipOval(
-                    child: Image.network(
-                      server.image,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          Text('�', style: TextStyle(fontSize: 10)),
+              // CRITICAL: Filter servers based on user role for display
+              ...(() {
+                final accessibleServers = provider.isPremium
+                    ? provider.servers
+                    : provider.servers
+                          .where((s) => s.type.toLowerCase() == 'free')
+                          .toList();
+                return accessibleServers.take(5).map((server) {
+                  return Container(
+                    margin: EdgeInsets.only(right: 4),
+                    width: 18,
+                    height: 18,
+                    child: ClipOval(
+                      child: Image.network(
+                        server.image,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            Text('🌍', style: TextStyle(fontSize: 10)),
+                      ),
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                }).toList();
+              })(),
               SizedBox(width: 4),
-              if (provider.servers.length > 5)
+              if ((() {
+                final accessibleServers = provider.isPremium
+                    ? provider.servers
+                    : provider.servers
+                          .where((s) => s.type.toLowerCase() == 'free')
+                          .toList();
+                return accessibleServers.length > 5;
+              })())
                 Text(
-                  '${provider.servers.length - 5}+',
+                  '${(() {
+                    final accessibleServers = provider.isPremium ? provider.servers : provider.servers.where((s) => s.type.toLowerCase() == 'free').toList();
+                    return accessibleServers.length - 5;
+                  })()}+',
                   style: GoogleFonts.poppins(
                     fontSize: 10,
                     color: _getSubtitleColor(context),

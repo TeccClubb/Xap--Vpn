@@ -303,13 +303,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildConnectionSection(BuildContext context, VpnProvide provider) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Get protocol name
+    // Only WireGuard protocol is supported
     String protocolName = 'WireGuard';
-    if (provider.selectedProtocol == Protocol.wireguard) {
-      protocolName = 'WireGuard';
-    } else if (provider.selectedProtocol == Protocol.singbox) {
-      protocolName = 'Singbox';
-    }
 
     return Container(
       margin: EdgeInsets.symmetric(horizontal: 18),
